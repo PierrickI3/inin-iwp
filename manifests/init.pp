@@ -170,15 +170,9 @@ class iwp::install (
   $ensure = installed,
 )
 {
-
   $daascache                        = 'C:/daas-cache/'
-  $currentversion                   = '2016_R1'
-  $latestpatch                      = ''
-
-  $webapplicationszip               = "CIC_Web_Applications_${currentversion}.zip"
-  $webapplicationslatestpatchzip    = "CIC_Web_Applications_${currentversion}_${latestpatch}.zip"
-
-  $server                           = $::hostname
+  #$latestpatch                      = 'Patch2'
+  $webapplicationszip               = "CIC_Web_Applications_${::cic_installed_major_version}_R${::cic_installed_release}.zip"
 
   if ($::operatingsystem != 'Windows')
   {
@@ -203,18 +197,21 @@ class iwp::install (
       # -= Media Services =-
       # ====================
 
-      # Download WebPI Command Line (webpicmd_x86.zip)
-      pget {'Download WebPI Command Line':
-        source => 'http://go.microsoft.com/fwlink/?LinkId=209681',
-        target => $cache_dir,
+      # Download WebPI Command Line
+      exec {'Download WebPI Command Line':
+        command  => "\$wc = New-Object System.Net.WebClient;\$wc.DownloadFile('http://go.microsoft.com/fwlink/?LinkId=209681','${cache_dir}/webpicmd_x86.zip')",
+        path     => $::path,
+        cwd      => $::system32,
+        timeout  => 900,
+        provider => powershell,
       }
 
       # Unzip WebPI Command Line
       unzip {'Unzip WebPI Command Line':
-        name        => "${daascache}webpicmd_x86.zip",
+        name        => "${cache_dir}/webpicmd_x86.zip",
         destination => "${cache_dir}/IWP",
         creates     => "${cache_dir}/IWP/WebpiCmdLine.exe",
-        require     => Pget['Download WebPI Command Line'],
+        require     => Exec['Download WebPI Command Line'],
       }
 
       # Install Media Services
@@ -231,9 +228,12 @@ class iwp::install (
       # =================
 
       # Download Microsoft Silverlight (Silverlight.exe)
-      pget {'Download Microsoft Silverlight':
-        source => 'http://silverlight.dlservice.microsoft.com/download/8/E/7/8E7D9B4B-2088-4AED-8356-20E65BE3EC91/40728.00/Silverlight.exe',
-        target => $cache_dir,
+      exec {'Download Microsoft Silverlight':
+        command  => "\$wc = New-Object System.Net.WebClient;\$wc.DownloadFile('http://silverlight.dlservice.microsoft.com/download/8/E/7/8E7D9B4B-2088-4AED-8356-20E65BE3EC91/40728.00/Silverlight.exe','${cache_dir}/Silverlight.exe')",
+        path     => $::path,
+        cwd      => $::system32,
+        timeout  => 900,
+        provider => powershell,
       }
 
       # Install Microsoft Silverlight
@@ -245,57 +245,50 @@ class iwp::install (
           'c:\\windows\\logs\\silverlight.log',
         ],
         provider        => 'windows',
-        require         => Pget['Download Microsoft Silverlight'],
+        require         => Exec['Download Microsoft Silverlight'],
       }
 
       # Add WCF (Server Manager/Features/.Net 3.5.1 Features/WCF Activation). Already done?
 
-      # =========
-      # -= LDS =-
-      # =========
+      # ============
+      # -= AD LDS =-
+      # ============
 
       # Install LDS role in Windows (ADLDS)
+      /*
       core::windows::feature { 'ADLDS':
         ensure  => present,
         restart => false,
       }
+      */
 
-      # Install Lightweight Directory Services (LDS) Role (\\CICSERVER\IC_WorkstationPreReqs\IWebPortal\ININ.IWP.LdsConfig.exe)
-      #   First Instance
-      #   LDS Administrator (vagrant?)
-      #package {'Install Lightweight Directory Services':
-      #  ensure          => installed,
-      #  source          => 'C:/I3/IC/Install/ExternalInstalls/IWebPortal/ININ.IWP.LDSConfig.exe',
-      #  install_options => [
-      #    '/l*v',
-      #    'c:\\windows\\logs\\ININ.IWP.LDSConfig.log',
-      #  ],
-      #  provider        => 'windows',
-      #  require         => Core::Windows::Feature['ADLDS'],
-      #}
-
-      # Enable IIS
-      class {'installiis':
-        ensure  => installed,
-        restart => false,
+      # Install Active Directory Lightweight Directory Services (LDS). CANNOT BE AUTOMATED. USE AUTOHOTKEY?
+      exec {'Install Lightweight Directory Services':
+        command => "cmd.exe /c C:\\I3\\IC\\Install\\ExternalInstalls\\IWebPortal\\ININ.IWP.LDSConfig.exe",
+        path    => $::path,
+        cwd     => $::system32,
+        timeout => 30,
+        require => [
+          Exec['Install Microsoft Silverlight'],
+          Exec['Install Media Services'],
+        ],
       }
 
       # ====================================
       # -= Install Interaction Web Portal =-
       # ====================================
 
-      # Mount Windows 2012R2 ISO
-      exec {'mount-windows-2012R2-iso':
-        command => "cmd.exe /c imdisk -a -f \"${daascache}\\9600.17050.WINBLUE_REFRESH.140317-1640_X64FRE_ENTERPRISE_EVAL_EN-US-IR3_CENA_X64FREE_EN-US_DV9.iso\" -m w:",
+      exec {'Mount CIC iso':
+        command => "cmd.exe /c imdisk -a -f \"${daascache}\\CIC_${::cic_installed_major_version}_R${::cic_installed_release}.iso\" -m l:",
         path    => $::path,
         cwd     => $::system32,
-        creates => 'w:/setup.exe',
+        creates => 'l:/Installs/Install.exe',
         timeout => 30,
-        require => Class['installiis'],
       }
 
-      # Install Interaction Web Portal TODO =====> Says that WCF is STILL NOT INSTALL
-      package {'install-interaction-web-portal':
+      # TODO Says that WCF is STILL NOT INSTALLED
+      # Install Interaction Web Portal
+      package {'Install Interaction Web Portal':
         ensure          => installed,
         source          => "L:/Installs/Off-ServerComponents/InteractionWebPortal_${::cic_installed_major_version}_R${::cic_installed_release}.msi",
         install_options => [
@@ -307,43 +300,41 @@ class iwp::install (
           {'REBOOT'=>'ReallySuppress'}
         ],
         provider        => 'windows',
-        require         => Exec['mount-cic-iso'],
+        require         => [
+          Exec['Mount CIC iso'],
+          Exec['Install Lightweight Directory Services'],
+        ],
       }
 
-      # Unmount Windows 2012R2 ISO
-      exec {'unmount-cic-iso':
+      # Unmount CIC
+      exec {'Unmount CIC iso':
         command => 'cmd.exe /c imdisk -D -m w:',
         path    => $::path,
         cwd     => $::system32,
         timeout => 30,
-        require => Package['install-interaction-web-portal'],
+        require => Package['Install Interaction Web Portal'],
       }
 
       # ==============================
-      # -= Create a web site in IIS =-
+      # -= Create ININApps web site =-
       # ==============================
-
-      # Remove Default Web Site
-      iis_site {'Default Web Site':
-        ensure  => absent,
-        require => Class['installiis'],
-      }
 
       # Create application pool (disable .Net runtime)
-      iis_apppool {'ININApps':
-        ensure                => present,
-        managedruntimeversion => '',
-        require               => [
-          Exec['Install Media Services'],
-          Iis_site['Default Web Site'],
-        ],
+      exec{'Add ININApps App Pool':
+        command => "cmd.exe /c \"%windir%\\system32\\inetsrv\\appcmd add apppool /name:ININApps /managedRRuntimeVersion:\"",
+        path    => $::path,
+        cwd     => $::system32,
+        unless  => "cmd.exe /c \"%windir%\\system32\\inetsrv\\appcmd list apppool | findstr /l ININApps\"",
+        require => Exec['Install Media Services'],
       }
 
       # Create a new site called ININApps
-      iis_site {'ININApps':
-        ensure   => present,
-        bindings => ['http/*:80:'],
-        require  => Iis_Apppool['ININApps'],
+      exec {'Add ININApps Virtual Directory':
+        command => "cmd.exe /c \"%windir%\\system32\\inetsrv\\appcmd add vdir /app.name:ININApps / /path:/ININApps /physicalPath:c:\\inetpub\\wwwroot\\ININApps\"",
+        path    => $::path,
+        cwd     => $::system32,
+        unless  => "cmd.exe /c \"%windir%\\system32\\inetsrv\\appcmd list vdir | findstr /l ININApps\"",
+        require => Exec['Add ININApps App Pool'],
       }
 
       # Create virtual application
@@ -353,23 +344,13 @@ class iwp::install (
         require         => Iis_Site['ININApps'],
       }
 
-      # Create virtual directory
-      iis_vdir {'ININApps/':
-        ensure       => present,
-        iis_app      => 'ININApps/',
-        physicalpath => 'C:\inetpub\wwwroot\ININApps',
-        require      => Iis_App['ININApps/'],
-      }
-
+      # TODO: TO COMPLETE (create virtual application using appcmd)
 
       # Add Desktop Experience feature in Windows
-
-      #    Use web site created previously
 
       # Add CIC server in Interaction Web Portal configuration
 
       # Reboot
-
     }
     default:
     {

@@ -1,3 +1,3 @@
 class {'iwp::install':
-  ensure                => installed,
+  ensure => installed,
 }
